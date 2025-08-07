@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 interactive_fractal_gpu.py
 --------------------------
@@ -13,13 +14,38 @@ Course  : COMP3710
 
 # 0. Imports & config
 import torch, numpy as np, matplotlib.pyplot as plt
+import argparse  # Import the argument parsing library
 plt.ion()
+
+# --- NEW: Command-Line Argument Parsing ---
+# This section sets up the ability to choose the fractal from the terminal.
+parser = argparse.ArgumentParser(
+    description="An interactive fractal explorer using PyTorch.",
+    formatter_class=argparse.RawTextHelpFormatter # For better help text formatting
+)
+# Create a group where only one argument can be chosen at a time
+group = parser.add_mutually_exclusive_group()
+group.add_argument('--mandelbrot', action='store_true', help='Display the Mandelbrot set (default).')
+group.add_argument('--julia', action='store_true', help='Display the Julia set.')
+group.add_argument('--newton', action='store_true', help='Display the Newton fractal for z³-1.')
+
+args = parser.parse_args()
+
+# Determine which fractal to display based on the command-line flag
+if args.julia:
+    FRACTAL = "julia"
+elif args.newton:
+    FRACTAL = "newton"
+else: # Default to Mandelbrot if --mandelbrot is specified or no flag is given
+    FRACTAL = "mandelbrot"
+# ------------------------------------------
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Using device for computation: {device}")
+print(f"[INFO] Selected fractal: {FRACTAL.title()}")
 
 # 1. Parameters
-FRACTAL  = "newton" # "mandelbrot", "julia", or "newton"
+# The FRACTAL variable is now set by the command-line arguments above.
 JULIA_K  = torch.complex(torch.tensor(-0.8), torch.tensor(0.156))
 BASE_ITER = 200
 ITER_CAP = 50000
@@ -37,13 +63,9 @@ def compute_fractal(x_min, x_max, y_min, y_max, width_px, base_iter):
     spacing = (x_max - x_min) / width_px
     Y, X = np.mgrid[y_min:y_max:spacing, x_min:x_max:spacing]
     
-    # --- PyTorch Major Component Start ---
-    # The entire grid of complex numbers is created as a PyTorch Tensor.
-    # This allows all subsequent operations to be performed in parallel.
     x = torch.from_numpy(X).to(torch.float32)
     y = torch.from_numpy(Y).to(torch.float32)
     
-    # Setup for the chosen fractal
     c_grid = torch.complex(x, y).to(device)
     z = torch.zeros_like(c_grid).to(device)
 
@@ -62,26 +84,20 @@ def compute_fractal(x_min, x_max, y_min, y_max, width_px, base_iter):
     calculated_iter = int(base_iter * max(1, 3 / span))
     max_iter = min(calculated_iter, ITER_CAP)
 
-    # --- Core Algorithm using PyTorch Parallelism ---
-    # This loop contains the core fractal algorithm. Each line inside
-    # operates on the entire grid of pixels (the Tensor) at once.
     for _ in range(max_iter):
         if FRACTAL.lower() == 'newton':
             z_old = zs.clone()
-            # This single line performs millions of calculations in parallel on the GPU.
             zs = zs - (zs**3 - 1) / (3 * zs**2 + 1e-6)
             converged = torch.abs(zs - z_old) < 1e-5
             ns += ~converged
             if converged.all(): break
             continue
         else: # Mandelbrot or Julia
-            # This line also performs millions of calculations in parallel.
             zs = zs*zs + c
         
         bounded = torch.abs(zs) < 4.0
         ns += bounded
         if not bounded.any(): break
-    # --- PyTorch Major Component End ---
 
     return fancy_colour(ns.cpu().numpy())
 
